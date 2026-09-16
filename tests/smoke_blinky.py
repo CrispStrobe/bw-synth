@@ -43,11 +43,27 @@ except FlowError as e:
 
 netlist = result["netlist"]
 assert isinstance(netlist, dict) and netlist.get("modules"), "no netlist came back"
-assert "blink" in netlist["modules"], f"expected a 'blink' module, got {list(netlist['modules'])}"
-ports = netlist["modules"]["blink"].get("ports", {})
-assert "led" in ports, f"expected an 'led' port, got {list(ports)}"
 
-print(f"\nok   netlist: modules={list(netlist['modules'])} ports={list(ports)}")
+# `synth_gowin` emits the WHOLE Gowin cell library beside the design — roughly
+# 150 modules, every LUT, DFF, PLL and BSRAM primitive. So "blink is in modules"
+# is a much weaker claim than it looks: it would pass on a netlist where the
+# design synthesised to nothing at all.
+#
+# What actually proves synthesis happened is that `blink` has the port we
+# declared AND at least one cell, i.e. it was elaborated rather than merely
+# named.
+assert "blink" in netlist["modules"], \
+    f"no 'blink' module among {len(netlist['modules'])} modules"
+blink = netlist["modules"]["blink"]
+ports = blink.get("ports", {})
+cells = blink.get("cells", {})
+assert "led" in ports, f"expected an 'led' port, got {list(ports)}"
+assert ports["led"].get("direction") == "output", \
+    f"'led' should be an output, got {ports['led'].get('direction')}"
+assert cells, "'blink' has no cells — it was named but not synthesised"
+
+print(f"\nok   netlist: {len(netlist['modules'])} modules; "
+      f"blink ports={list(ports)} cells={len(cells)}")
 if result["bitstream_b64"]:
     print(f"ok   bitstream: {len(result['bitstream_b64'])} base64 chars")
 else:
