@@ -88,6 +88,16 @@ their WebAssembly into the same filesystem on first run — that is the "Prepari
 to run yowasp-yosys. This might take a while..." step. There is nothing left for
 it, and the tool dies with `OSError: [Errno 28] No space left on device`.
 
+**It has a second face, and they are the same fault.** Depending on how far the
+process gets, `/api/health` reports instead:
+
+    FileNotFoundError: [Errno 2] No usable temporary directory found in
+    ['/tmp', '/tmp', '/var/tmp', '/usr/tmp', '/var/task']
+
+That is Python's `tempfile` rejecting every candidate because none of them is
+writable with room to spare — not a missing directory. Both strings mean 0 MB
+free, and both are recorded here so whoever meets one recognises the other.
+
 **This is not a plan limit that money fixes, or not obviously.** The package-size
 ceiling was never the problem — the deployment builds fine. The constraint is
 **writable ephemeral storage at runtime**, and a ~330 MB toolchain that unpacks
