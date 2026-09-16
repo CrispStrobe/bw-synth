@@ -128,7 +128,15 @@ def synthesise(files, constraints, top, target):
         with open(cst, "w", encoding="utf-8") as fh:
             fh.write(constraints or "")
 
-        family = target.get("family", "GW2A")
+        # The FAMILY is a chipdb name, not a marketing name, and the two differ.
+        # nextpnr ships: GW1N-1, GW1N-4, GW1N-9, GW1N-9C, GW1NS-4, GW1NZ-1,
+        # GW2A-18, GW2A-18C, GW5A-25A, GW5AST-138C (reported by CI, 2026-09-16).
+        #
+        # The Tang Nano 20K's GW2AR-LV18QN88C8/I7 is a C-GRADE GW2A-18 — that is
+        # what the "C8" means — so its database is GW2A-18C and not the "GW2A" a
+        # reader infers from the part number. Apicula's readme saying "C devices
+        # require passing --vopt family" is about exactly this distinction.
+        family = target.get("family", "GW2A-18C")
         device = target.get("device", "GW2AR-LV18QN88C8/I7")
         json_netlist = os.path.join(work, "design.json")
 
@@ -148,7 +156,10 @@ def synthesise(files, constraints, top, target):
 
         bitstream = None
         try:
-            log.append(_run(["gowin_pack", "-d", device, "-o", "design.fs", "design_pnr.json"],
+            # gowin_pack wants the same family/chip name, not the full ordering
+            # code: the part number is what you buy, the family is what the
+            # bitstream format belongs to.
+            log.append(_run(["gowin_pack", "-d", family, "-o", "design.fs", "design_pnr.json"],
                             work, "gowin_pack"))
             with open(os.path.join(work, "design.fs"), "rb") as fh:
                 import base64

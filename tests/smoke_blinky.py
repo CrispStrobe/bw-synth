@@ -22,7 +22,9 @@ endmodule
 # Pin 73 is IOT40A on the left header — a real, free I/O on this board.
 CST = 'IO_LOC "led" 73;\nIO_PORT "led" IO_TYPE=LVCMOS33;\n'
 
-TARGET = {"family": "GW2A", "device": "GW2AR-LV18QN88C8/I7", "vopt": "family"}
+# family is the CHIPDB name (GW2A-18C), device is the ordering code. They are
+# different strings for different tools and conflating them cost a CI round.
+TARGET = {"family": "GW2A-18C", "device": "GW2AR-LV18QN88C8/I7", "vopt": "family"}
 
 print("tool versions:")
 for name, version in tool_versions().items():
