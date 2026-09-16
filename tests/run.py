@@ -3,15 +3,21 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-import tests.test_licence as t                                     # noqa: E402
+import tests.test_licence as licence_tests                         # noqa: E402
+import tests.test_request_path as request_tests                    # noqa: E402
 
 failed = 0
-for name in sorted(n for n in dir(t) if n.startswith("test_")):
-    try:
-        getattr(t, name)()
-        print(f"  ok    {name}")
-    except AssertionError as e:
-        print(f"  FAIL  {name}: {e}")
-        failed += 1
+for module in (licence_tests, request_tests):
+    print(f"{module.__name__}:")
+    for name in sorted(n for n in dir(module) if n.startswith("test_")):
+        try:
+            getattr(module, name)()
+            print(f"  ok    {name}")
+        except AssertionError as e:
+            print(f"  FAIL  {name}: {e}")
+            failed += 1
+        except Exception as e:                                     # noqa: BLE001
+            print(f"  ERROR {name}: {type(e).__name__}: {e}")
+            failed += 1
 print(f"\n{failed} failure(s)")
 sys.exit(1 if failed else 0)
