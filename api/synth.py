@@ -14,6 +14,10 @@ can be checked against each other without either being "the" copy.
   RESPONSE 200
     {"contract": 1, "ok": true, "netlist": {...}, "bitstream": "<base64>|null",
      "log": "...", "toolVersions": {...}}
+
+This module is TRANSPORT-FREE. app.py owns routing and sockets; everything here
+is a pure function, which is why swapping Vercel's per-file handler model for a
+single WSGI entrypoint changed nothing below this line.
     {"contract": 1, "ok": false, "code": "...", "reason": "...", "log": "..."}
 
 EVERY failure is a 200 with ok:false and a NAMED code, except a malformed request
@@ -22,7 +26,6 @@ HTTP error — it is an answer, and the client shows it to the user as their own
 mistake rather than "try again later".
 """
 import json
-from http.server import BaseHTTPRequestHandler
 
 from ._flow import FlowError, synthesise
 from ._licence import screen
@@ -30,15 +33,6 @@ from ._licence import screen
 CONTRACT_VERSION = 1
 MAX_BYTES = 2 * 1024 * 1024        # generous for HDL, small enough to bound abuse
 MAX_FILES = 64
-
-
-def _reply(handler, status, body):
-    payload = json.dumps(body).encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("content-type", "application/json")
-    handler.send_header("content-length", str(len(payload)))
-    handler.end_headers()
-    handler.wfile.write(payload)
 
 
 def _refuse(code, reason, **extra):
@@ -111,17 +105,3 @@ def handle_synth(raw_body, *, run=None):
         "log": result["log"],
         "toolVersions": result["toolVersions"],
         "warnings": warnings}
-
-
-class handler(BaseHTTPRequestHandler):          # noqa: N801 — Vercel's expected name
-    def do_POST(self):                          # noqa: N802
-        try:
-            length = int(self.headers.get("content-length") or 0)
-        except ValueError:
-            return _reply(self, 400, _refuse("bad-request", "Unreadable content-length."))
-        body = self.rfile.read(length) if length > 0 else b""
-        status, payload = handle_synth(body)
-        return _reply(self, status, payload)
-
-    def do_GET(self):                           # noqa: N802
-        _reply(self, 405, _refuse("method-not-allowed", "Synthesis is a POST."))

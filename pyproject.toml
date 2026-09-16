@@ -1,0 +1,35 @@
+[project]
+name = "bw-synth"
+version = "0.1.0"
+description = "Gowin FPGA synthesis as a service for brickwright-lite"
+requires-python = ">=3.9"
+
+# The whole Gowin open flow, and every piece is permissively licensed — which is
+# the reason this service can exist at all. See README.md.
+#
+# DECLARED HERE, NOT ONLY IN requirements.txt. The first production deploy came
+# up with the app routing correctly and every tool missing:
+#
+#   yosys    unavailable: No such file or directory: 'yowasp-yosys'
+#   nextpnr  unavailable: ... Tried: yowasp-nextpnr-himbaechel-gowin, ...
+#   apycula  unavailable: No such file or directory: 'gowin_pack'
+#
+# Vercel's Python runtime installs from the pyproject that declares the
+# entrypoint; requirements.txt alone was not enough. /api/health reported it
+# correctly rather than pretending to work, which is exactly what that endpoint
+# and its fail-closed 503 are for.
+#
+# APYCULA'S VERSION IS NOT OURS TO CHOOSE: yowasp-nextpnr-himbaechel-gowin
+# depends on Apycula==0.32 exactly, because place & route and the bitstream
+# packer must agree about the device database. Bumping nextpnr means following
+# it here, never the reverse.
+dependencies = [
+    "yowasp-yosys==0.69.0.0.post1233",
+    "yowasp-nextpnr-himbaechel-gowin==0.11.1.0.post826",
+    "apycula==0.32",
+]
+
+# Vercel's Python runtime wants ONE declared entrypoint rather than a function
+# per api/*.py. app.py routes /api/synth and /api/health itself.
+[tool.vercel]
+entrypoint = "app:app"

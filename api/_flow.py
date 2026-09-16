@@ -18,36 +18,82 @@ persisted: the inputs are somebody else's source code.
 """
 import json
 import os
+import sys
 import shutil
 import subprocess
 import tempfile
 
-TIMEOUT_SECONDS = int(os.environ.get("BW_SYNTH_TIMEOUT", "600"))
-
-
-# YoWASP names its console script after the package, and the package name is not
-# always the tool name: `yowasp-nextpnr-himbaechel-gowin` ships a command of the
-# same name, not the `yowasp-nextpnr-himbaechel` you would guess from the binary
-# it wraps. The first CI run failed exactly there — yosys and gowin_pack ran, and
-# nextpnr was "No such file or directory".
+# DELIBERATELY SHORTER THAN THE PLATFORM'S LIMIT.
 #
-# So the binary is DISCOVERED rather than assumed, and a failure names every
-# candidate tried. A hard-coded guess fails opaquely on the next rename; this
-# fails with the list of things it looked for.
-NEXTPNR_CANDIDATES = (
-    "yowasp-nextpnr-himbaechel-gowin",
-    "yowasp-nextpnr-himbaechel",
-    "nextpnr-himbaechel",
-)
+# Vercel caps maxDuration at 300s on this plan (the deploy is refused outright
+# above it). If a tool were allowed to run to that cap, the PLATFORM would kill
+# the function — and the client would get a dead connection or a 504 instead of
+# one of this service's named codes. The caller cannot tell "your design is too
+# big" from "the service is broken" on a 504.
+#
+# So the flow gives up first, with `timeout`, a reason, and whatever log the tool
+# had produced. Twenty seconds of headroom covers the response being written and
+# the temporary directory being cleaned up.
+#
+# Consequence worth stating: place & route on a LARGE design — a soft CPU, say —
+# can legitimately exceed this. Such a design cannot be built on this plan at
+# all, and the honest answer is a named timeout rather than a mystery.
+TIMEOUT_SECONDS = int(os.environ.get("BW_SYNTH_TIMEOUT", "280"))
 
 
-def _resolve(candidates, what):
-    for name in candidates:
-        if shutil.which(name):
-            return name
-    raise FlowError(
-        "tool-missing",
-        f"{what} is not installed. Tried: {', '.join(candidates)}.")
+# HOW EACH TOOL IS INVOKED, and why it is not simply its name.
+#
+# Two things bit this in production, in order:
+#
+#   1. YoWASP names its console script after the PACKAGE, so the Gowin
+#      place-and-route command is `yowasp-nextpnr-himbaechel-gowin`, not the
+#      `yowasp-nextpnr-himbaechel` you would infer from the binary it wraps.
+#   2. On Vercel the dependencies install fine — the build log says so — but
+#      their console scripts are NOT on PATH, so every tool reported
+#      "No such file or directory" from a live deployment while being present.
+#
+# So each tool is described by both forms: the script name, and the module to run
+# with `python -m`. The first that works is used, and if none does the error
+# names every form tried. That is the same move that answered the binary-name and
+# chipdb questions in one CI round each — make the failure enumerate what was
+# attempted instead of guessing again.
+TOOLS = {
+    "yosys": {
+        "scripts": ("yowasp-yosys",),
+        "modules": ("yowasp_yosys",),
+        "version": ("-V",),
+    },
+    "nextpnr": {
+        "scripts": ("yowasp-nextpnr-himbaechel-gowin", "yowasp-nextpnr-himbaechel",
+                    "nextpnr-himbaechel"),
+        "modules": ("yowasp_nextpnr_himbaechel_gowin", "yowasp_nextpnr_himbaechel"),
+        "version": ("--version",),
+    },
+    "gowin_pack": {
+        "scripts": ("gowin_pack",),
+        "modules": ("apycula.gowin_pack",),
+        "version": ("--help",),
+    },
+}
+
+
+def _tool_argv(name):
+    """The argv prefix that actually runs this tool here, or a FlowError saying
+    everything that was tried."""
+    spec = TOOLS[name]
+    tried = []
+    for script in spec["scripts"]:
+        tried.append(script)
+        if shutil.which(script):
+            return [script]
+    for module in spec["modules"]:
+        tried.append(f"{os.path.basename(sys.executable)} -m {module}")
+        probe = subprocess.run([sys.executable, "-c", f"import {module}"],
+                               capture_output=True, text=True)
+        if probe.returncode == 0:
+            return [sys.executable, "-m", module]
+    raise FlowError("tool-missing",
+                    f"{name} could not be invoked. Tried: {', '.join(tried)}.")
 
 
 class FlowError(Exception):
@@ -143,13 +189,13 @@ def synthesise(files, constraints, top, target):
         read = " ".join(f"read_verilog {s};" for s in sources)
         top_arg = f" -top {top}" if top else ""
         log.append(_run(
-            ["yowasp-yosys", "-p", f"{read} synth_gowin{top_arg} -json design.json"],
+            _tool_argv("yosys")
+            + ["-p", f"{read} synth_gowin{top_arg} -json design.json"],
             work, "yosys"))
 
         packed = os.path.join(work, "design_pnr.json")
-        nextpnr = _resolve(NEXTPNR_CANDIDATES, "nextpnr")
         log.append(_run(
-            [nextpnr, "--device", device,
+            _tool_argv("nextpnr") + ["--device", device,
              "--vopt", f"family={family}", "--vopt", f"cst=design.cst",
              "--json", "design.json", "--write", "design_pnr.json"],
             work, "nextpnr"))
@@ -159,7 +205,8 @@ def synthesise(files, constraints, top, target):
             # gowin_pack wants the same family/chip name, not the full ordering
             # code: the part number is what you buy, the family is what the
             # bitstream format belongs to.
-            log.append(_run(["gowin_pack", "-d", family, "-o", "design.fs", "design_pnr.json"],
+            log.append(_run(_tool_argv("gowin_pack")
+                            + ["-d", family, "-o", "design.fs", "design_pnr.json"],
                             work, "gowin_pack"))
             with open(os.path.join(work, "design.fs"), "rb") as fh:
                 import base64
@@ -180,21 +227,25 @@ def synthesise(files, constraints, top, target):
 
 
 def tool_versions():
-    """Reported with every build: a bitstream is only reproducible against known tools."""
+    """Reported with every build, and by /api/health.
+
+    A bitstream is only reproducible against known tools, and the health probe is
+    fail-closed — a backend that cannot do the work must say so rather than
+    accept a request it will fail. So an unresolvable tool reports WHY, listing
+    every invocation form tried, which is how the first live deployment explained
+    itself without anyone reading a build log.
+    """
     out = {}
-    try:
-        nextpnr = _resolve(NEXTPNR_CANDIDATES, "nextpnr")
-    except FlowError as e:
-        nextpnr = None
-        out["nextpnr"] = f"unavailable: {e.reason}"
-    for name, argv in (("yosys", ["yowasp-yosys", "-V"]),
-                       ("nextpnr", [nextpnr, "--version"] if nextpnr else None),
-                       ("apycula", ["gowin_pack", "--help"])):
-        if argv is None:
+    for name, spec in TOOLS.items():
+        try:
+            argv = _tool_argv(name) + list(spec["version"])
+        except FlowError as e:
+            out[name] = f"unavailable: {e.reason}"
             continue
         try:
-            p = subprocess.run(argv, capture_output=True, text=True, timeout=30)
-            out[name] = (p.stdout or p.stderr or "").strip().splitlines()[0][:120]
-        except Exception as e:      # noqa: BLE001 — a missing tool must not 500 the probe
+            p = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+            text = (p.stdout or p.stderr or "").strip()
+            out[name] = text.splitlines()[0][:120] if text else "(no version output)"
+        except Exception as e:                  # noqa: BLE001
             out[name] = f"unavailable: {e}"
     return out
