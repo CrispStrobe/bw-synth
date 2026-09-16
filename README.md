@@ -76,10 +76,44 @@ than a missing switch.
 
 ## Status
 
-**Not yet deployed, and not yet run against the real toolchain.** The handlers,
-the contract and the licence screen are written and the screen is tested; the
-flow has not executed a synthesis on this machine, because the toolchain is not
-installed here. Treat the first real build as the thing that proves it.
+**The flow works. The service has never served a request. It is not deployed.**
+
+Those are three different claims and they are worth keeping apart.
+
+| | evidence |
+|---|---|
+| **Synthesis runs end to end** | `tests/smoke_blinky.py` in CI: Verilog → netlist → place & route → a **6.16 MB bitstream**, on yosys 0.69 + nextpnr-himbaechel-gowin + apycula |
+| **The request path is correct** | `tests/test_request_path.py`, 11 cases — contract, licence refusal, body limits, which failures are HTTP errors rather than answers |
+| **The licence screen refuses what it must** | `tests/test_licence.py`, 7 cases |
+| **HTTP transport** | *untested* — the handler class that moves bytes has never run |
+| **Deployment** | *not done* |
+
+The first deploy plus one request from brickwright-lite's client is what closes
+the remaining gap, and it is a small one: the logic beneath the socket is
+covered.
+
+### What getting here cost, in case it saves someone the same rounds
+
+Four CI failures, and the first three were the same mistake wearing different
+clothes — guessing a plausible string against a toolchain nobody had run:
+
+1. `apycula==0.33` — but `yowasp-nextpnr-himbaechel-gowin` pins `Apycula==0.32`
+   exactly, because place & route and the packer must agree on the device
+   database. **That version is not ours to choose.**
+2. `yowasp-nextpnr-himbaechel` — the console script is named after the *package*,
+   so it is `yowasp-nextpnr-himbaechel-gowin`.
+3. `--vopt family=GW2A` — there is no `GW2A` chipdb.
+4. Fixed by asking: the flow now lists the databases it *has* when it cannot find
+   the one asked for, and CI answered in one round — **`GW2A-18C`**.
+
+`family` and `device` are different strings for different tools:
+
+    device  GW2AR-LV18QN88C8/I7   the ordering code — what you buy, --device
+    family  GW2A-18C              the chipdb — what nextpnr loads, gowin_pack -d
+
+The Tang Nano 20K's part is a C-grade GW2A-18; that is what the `C8` means. This
+is also what apicula's "C devices require `--vopt family`" is distinguishing —
+the C-grade database from the plain one.
 
 Nothing is persisted: inputs are somebody else's source code, and each request
 works in a temporary directory that is removed afterwards.
