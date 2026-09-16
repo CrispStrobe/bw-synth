@@ -85,12 +85,15 @@ Those are three different claims and they are worth keeping apart.
 | **Synthesis runs end to end** | `tests/smoke_blinky.py` in CI: Verilog → netlist → place & route → a **6.16 MB bitstream**, on yosys 0.69 + nextpnr-himbaechel-gowin + apycula |
 | **The request path is correct** | `tests/test_request_path.py`, 11 cases — contract, licence refusal, body limits, which failures are HTTP errors rather than answers |
 | **The licence screen refuses what it must** | `tests/test_licence.py`, 7 cases |
-| **HTTP transport** | *untested* — the handler class that moves bytes has never run |
+| **HTTP transport** | `tests/test_transport.py`, 6 cases — the handler driven with fake streams |
+| **Vercel's runtime invoking it** | *unverified* — only a deploy answers this |
 | **Deployment** | *not done* |
 
 The first deploy plus one request from brickwright-lite's client is what closes
-the remaining gap, and it is a small one: the logic beneath the socket is
-covered.
+the remaining gap, and it is now a narrow one: everything beneath the socket is
+covered, and what is left is whether Vercel's Python runtime invokes a
+`BaseHTTPRequestHandler` subclass the way the class expects. No test here can
+answer that.
 
 ### What getting here cost, in case it saves someone the same rounds
 
