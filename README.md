@@ -74,6 +74,47 @@ need `--vopt family=<FAMILY>` on nextpnr and the matching `-d <DEVICE>` on
 `gowin_pack`. Omitting it fails in a way that reads like a broken design rather
 than a missing switch.
 
+## Deployment: it runs, and the toolchain does not fit
+
+**Deployed at https://bw-synth.vercel.app — and synthesis cannot run there.**
+Measured from inside the live function, not inferred:
+
+    /tmp         525 MB total,   0 MB free
+    dependencies             333 MB   (installed into /tmp by the runtime)
+    /var/task     31 MB total,   0 MB free
+
+The three tools install to `/tmp/_vc_deps` and the YoWASP packages then unpack
+their WebAssembly into the same filesystem on first run — that is the "Preparing
+to run yowasp-yosys. This might take a while..." step. There is nothing left for
+it, and the tool dies with `OSError: [Errno 28] No space left on device`.
+
+**This is not a plan limit that money fixes, or not obviously.** The package-size
+ceiling was never the problem — the deployment builds fine. The constraint is
+**writable ephemeral storage at runtime**, and a ~330 MB toolchain that unpacks
+another ~100 MB does not fit in 525 MB.
+
+`/api/health` says so, in those words, with the numbers. The service refuses
+work it cannot do rather than accepting a request and failing mid-synthesis,
+which is the whole reason that endpoint is fail-closed.
+
+### What does work, today, in production
+
+- the app, routing, and the contract
+- **the licence rule**: POST a GPL-3.0 source to `/api/synth` and it is refused
+  by name, with evidence, pointing at the local tier — and synthesis is never
+  reached. That is the rule this service exists to enforce, and it is enforced.
+- `gowin_pack` resolves and runs; only the two WebAssembly tools cannot unpack.
+
+### Where it should probably live instead
+
+A **container** — Fly, Railway, Render, or anything with a real disk — where
+330 MB is unremarkable. The flow is proven (see below); it needs a filesystem,
+not a rewrite. Vercel Sandbox is the other candidate, being designed for exactly
+this shape of work.
+
+Keeping it on a Vercel function would mean fitting the toolchain into ~190 MB of
+free ephemeral space, which no amount of configuration here achieves.
+
 ## Status
 
 **The flow works. The service has never served a request. It is not deployed.**

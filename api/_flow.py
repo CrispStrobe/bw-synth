@@ -77,23 +77,84 @@ TOOLS = {
 }
 
 
+def _subprocess_env():
+    """Environment for every tool subprocess, with sys.path handed down.
+
+    THE BUG THIS FIXES, diagnosed from production rather than guessed. On Vercel
+    the dependencies install to /tmp/_vc_deps/lib/python3.12/site-packages and
+    the runtime adds that to sys.path AT RUNTIME — not through PYTHONPATH. So the
+    function process imports them perfectly well and a freshly spawned
+    interpreter cannot see them at all, which is why every tool reported
+    "could not be invoked" from a deployment where all three were present and
+    importable.
+
+    Handing the parent's sys.path down as PYTHONPATH keeps the subprocess model —
+    which is what gives us timeouts, per-step logs and the ability to kill a
+    place-and-route that will not finish — without depending on how the platform
+    chose to arrange its imports.
+    """
+    env = dict(os.environ)
+
+    # ONLY /tmp IS WRITABLE IN A LAMBDA. The YoWASP packages unpack their
+    # WebAssembly into a cache directory on first run — "Preparing to run
+    # yowasp-yosys. This might take a while..." is that step — and the default
+    # location is under HOME, which is read-only here. Every one of these points
+    # somewhere writable so the unpack can succeed.
+    cache = os.environ.get("BW_SYNTH_CACHE", "/tmp/bw-synth-cache")
+    os.makedirs(cache, exist_ok=True)
+    env.setdefault("YOWASP_CACHE_DIR", cache)
+    env["XDG_CACHE_HOME"] = cache
+    env["HOME"] = cache
+    env["TMPDIR"] = env.get("TMPDIR", "/tmp")
+
+    inherited = [p for p in sys.path if p and os.path.isdir(p)]
+    existing = env.get("PYTHONPATH", "")
+    if existing:
+        inherited.append(existing)
+    env["PYTHONPATH"] = os.pathsep.join(inherited)
+    return env
+
+
 def _tool_argv(name):
-    """The argv prefix that actually runs this tool here, or a FlowError saying
-    everything that was tried."""
+    """The argv prefix that actually RUNS this tool here.
+
+    Resolution executes the tool's version command and requires exit 0. Checking
+    importability was not enough and produced a health probe that lied: the
+    YoWASP packages import perfectly and ship no __main__, so `python -m` failed
+    while resolution called them present. A probe that reports healthy when the
+    work cannot be done defeats the entire point of being fail-closed.
+
+    Forms are tried in order, and failure names every one with what it said.
+    """
     spec = TOOLS[name]
+    runner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_runner.py")
+    forms = [[s_] for s_ in spec["scripts"]]
+    forms += [[sys.executable, "-m", m] for m in spec["modules"]]
+    forms += [[sys.executable, runner, s_] for s_ in spec["scripts"]]
+
     tried = []
-    for script in spec["scripts"]:
-        tried.append(script)
-        if shutil.which(script):
-            return [script]
-    for module in spec["modules"]:
-        tried.append(f"{os.path.basename(sys.executable)} -m {module}")
-        probe = subprocess.run([sys.executable, "-c", f"import {module}"],
-                               capture_output=True, text=True)
+    for argv in forms:
+        label = " ".join(os.path.basename(a) for a in argv)
+        if len(argv) == 1 and not shutil.which(argv[0]):
+            tried.append(f"{label} (not on PATH)")
+            continue
+        try:
+            probe = subprocess.run(argv + list(spec["version"]),
+                                   capture_output=True, text=True, timeout=120,
+                                   env=_subprocess_env())
+        except Exception as e:                  # noqa: BLE001
+            tried.append(f"{label} ({type(e).__name__})")
+            continue
         if probe.returncode == 0:
-            return [sys.executable, "-m", module]
+            return argv
+        # Keep the LAST line, not the first, and keep more of it: YoWASP prints
+        # a progress banner before it fails, so the first line is never the error.
+        lines = [ln for ln in (probe.stderr or probe.stdout or "").strip().splitlines() if ln.strip()]
+        detail = (lines[-1] if lines else "")[:220]
+        tried.append(f"{label} (exit {probe.returncode}: {detail})")
+
     raise FlowError("tool-missing",
-                    f"{name} could not be invoked. Tried: {', '.join(tried)}.")
+                    f"{name} could not be invoked. Tried: " + "; ".join(tried))
 
 
 class FlowError(Exception):
@@ -130,7 +191,7 @@ def _available_chipdbs():
 def _run(argv, cwd, step):
     try:
         proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True,
-                              timeout=TIMEOUT_SECONDS)
+                              timeout=TIMEOUT_SECONDS, env=_subprocess_env())
     except FileNotFoundError as e:
         raise FlowError("tool-missing", f"{step}: {e}") from e
     except subprocess.TimeoutExpired as e:
@@ -230,22 +291,22 @@ def tool_versions():
     """Reported with every build, and by /api/health.
 
     A bitstream is only reproducible against known tools, and the health probe is
-    fail-closed — a backend that cannot do the work must say so rather than
-    accept a request it will fail. So an unresolvable tool reports WHY, listing
-    every invocation form tried, which is how the first live deployment explained
-    itself without anyone reading a build log.
+    fail-closed: a backend that cannot do the work must say so rather than accept
+    a request it will fail. Resolution proves each tool RUNS, so an entry here is
+    either a real version string or a reason, never a hopeful guess.
     """
     out = {}
     for name, spec in TOOLS.items():
         try:
-            argv = _tool_argv(name) + list(spec["version"])
+            argv = _tool_argv(name)
         except FlowError as e:
             out[name] = f"unavailable: {e.reason}"
             continue
         try:
-            p = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+            p = subprocess.run(argv + list(spec["version"]), capture_output=True,
+                               text=True, timeout=120, env=_subprocess_env())
             text = (p.stdout or p.stderr or "").strip()
-            out[name] = text.splitlines()[0][:120] if text else "(no version output)"
+            out[name] = text.splitlines()[0][:120] if text else "(ran, no version output)"
         except Exception as e:                  # noqa: BLE001
             out[name] = f"unavailable: {e}"
     return out

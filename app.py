@@ -18,6 +18,7 @@ move. That separation was made because the handlers had never served a request;
 it paid off the first time the platform disagreed with their shape.
 """
 import json
+import os
 
 from api._flow import tool_versions
 from api.synth import CONTRACT_VERSION, MAX_BYTES, handle_synth
@@ -35,6 +36,66 @@ def _response(start_response, status_code, body):
     return [payload]
 
 
+def _environment():
+    """Facts about the runtime, reported when the toolchain cannot be found.
+
+    Added after a live deployment insisted every tool was missing while the build
+    log said "Installing required dependencies from pyproject.toml...". Both
+    cannot be true, and the difference between "not installed", "installed
+    elsewhere" and "too large to ship" needs evidence rather than another guess —
+    each has a different fix and I had already spent three rounds guessing at
+    strings on this project.
+    """
+    import importlib.util
+    import site
+    import sys as _sys
+
+    modules = {}
+    for name in ("yowasp_yosys", "yowasp_nextpnr_himbaechel_gowin", "apycula"):
+        try:
+            spec = importlib.util.find_spec(name)
+            modules[name] = spec.origin if spec else "not found on sys.path"
+        except Exception as e:                  # noqa: BLE001
+            modules[name] = f"error: {type(e).__name__}: {e}"
+
+    try:
+        site_packages = site.getsitepackages()
+    except Exception:                           # noqa: BLE001
+        site_packages = []
+
+    # Ephemeral disk, because that is what actually stopped this working.
+    # The dependencies install into /tmp AND the YoWASP packages unpack their
+    # WebAssembly into /tmp at first run, and a Lambda's /tmp is small. A number
+    # here turns "no space left on device" into a decision about the platform.
+    disk = {}
+    for path in ("/tmp", "/var/task"):
+        try:
+            st = os.statvfs(path)
+            disk[path] = {
+                "totalMB": round(st.f_blocks * st.f_frsize / 1048576),
+                "freeMB": round(st.f_bavail * st.f_frsize / 1048576),
+            }
+        except Exception as e:                  # noqa: BLE001
+            disk[path] = f"unavailable: {e}"
+    try:
+        deps = "/tmp/_vc_deps"
+        total = sum(os.path.getsize(os.path.join(r, f))
+                    for r, _, fs in os.walk(deps) for f in fs
+                    if os.path.exists(os.path.join(r, f)))
+        disk["depsMB"] = round(total / 1048576)
+    except Exception as e:                      # noqa: BLE001
+        disk["depsMB"] = f"unavailable: {e}"
+
+    return {
+        "disk": disk,
+        "python": _sys.version.split()[0],
+        "executable": _sys.executable,
+        "sysPathTail": _sys.path[-6:],
+        "sitePackages": site_packages[:3],
+        "modules": modules,
+    }
+
+
 def _health():
     """The probe brickwright-lite's backend selector calls.
 
@@ -43,9 +104,18 @@ def _health():
     do the work must say so rather than accept it and fail later.
     """
     versions = tool_versions()
+    # `unavailable:` is the only shape tool_versions() reports for a tool that
+    # could not be RUN — resolution proves execution now, so this cannot report
+    # healthy while a tool is broken. An earlier version keyed on the same prefix
+    # while resolution only checked importability, and cheerfully returned
+    # ok:true with two tools failing.
     ok = all(not str(v).startswith("unavailable") for v in versions.values())
-    return (200 if ok else 503), {"contract": CONTRACT_VERSION, "ok": ok,
-                                  "toolVersions": versions}
+    body = {"contract": CONTRACT_VERSION, "ok": ok, "toolVersions": versions}
+    if not ok:
+        # Only when something is wrong: a healthy probe should be small and
+        # boring, and this is diagnostic detail nobody needs when it works.
+        body["environment"] = _environment()
+    return (200 if ok else 503), body
 
 
 def app(environ, start_response):
