@@ -58,6 +58,29 @@ class FlowError(Exception):
         self.log = log
 
 
+def _available_chipdbs():
+    """Which device databases this nextpnr build actually ships.
+
+    Asked only when nextpnr says it cannot find one. The error it gives —
+    "Unable to read chipdb /share/himbaechel/gowin/chipdb-GW2A.bin" — names the
+    file it wanted and not one of the files it has, which leaves you guessing at
+    a string. Listing them turns the next failure into an answer.
+    """
+    import glob
+    import sysconfig
+    roots = [
+        os.path.join(sysconfig.get_paths().get("purelib", ""), "yowasp_nextpnr_himbaechel_gowin"),
+        os.path.join(sysconfig.get_paths().get("platlib", ""), "yowasp_nextpnr_himbaechel_gowin"),
+        "/share/himbaechel",
+    ]
+    found = []
+    for root in roots:
+        if not root:
+            continue
+        found += glob.glob(os.path.join(root, "**", "chipdb*"), recursive=True)
+    return sorted({os.path.basename(f) for f in found}) or ["(none found on disk)"]
+
+
 def _run(argv, cwd, step):
     try:
         proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True,
@@ -71,8 +94,19 @@ def _run(argv, cwd, step):
                         "take forever.", (e.stdout or "") + (e.stderr or "")) from e
     log = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode != 0:
-        # A DESIGN error, not a service error. It is reported as itself so the
-        # client shows the user their own mistake rather than "try again".
+        # A chipdb miss is NOT a design error and must not be reported as one —
+        # the user's Verilog is fine and no amount of editing it will help. It is
+        # a packaging or device-name problem on this side, so it gets its own code
+        # and carries the list of databases that DO exist.
+        if "chipdb" in log:
+            raise FlowError(
+                "chipdb-missing",
+                f"{step} could not load its device database. This is a configuration "
+                f"problem here, not a problem with the design. Available: "
+                f"{', '.join(_available_chipdbs())}",
+                log)
+        # A DESIGN error. Reported as itself so the client shows the user their
+        # own mistake rather than "try again".
         raise FlowError("synthesis-failed", f"{step} failed.", log)
     return log
 

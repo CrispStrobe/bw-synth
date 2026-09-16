@@ -31,7 +31,12 @@ for name, version in tool_versions().items():
 try:
     result = synthesise([{"name": "blink.v", "source": BLINKY}], CST, "blink", TARGET)
 except FlowError as e:
-    print(f"\nFAILED at {e.code}: {e.reason}\n{e.log}")
+    print(f"\nFAILED at {e.code}: {e.reason}")
+    if e.code == "chipdb-missing":
+        # Worth separating from a design failure in the output too: this one is
+        # ours to fix, and the reason above already names the valid options.
+        print("\nThis is a configuration problem in bw-synth, not in the design.")
+    print(e.log)
     sys.exit(1)
 
 netlist = result["netlist"]
