@@ -1,5 +1,19 @@
 # The whole Gowin open flow, and every piece is permissively licensed —
 # which is the reason this service can exist at all. See README.md.
+#
+# APYCULA'S VERSION IS NOT OURS TO CHOOSE. yowasp-nextpnr-himbaechel-gowin
+# depends on `Apycula==0.32`, pinned exactly, because a place-and-route package
+# and the bitstream packer that consumes its output have to agree about the
+# device database. Pinning 0.33 here made pip unsolvable:
+#
+#   ERROR: Cannot install ... because these package versions have conflicting
+#   dependencies. The conflict is caused by:
+#       The user requested apycula==0.33
+#       yowasp-nextpnr-himbaechel-gowin 0.11.1.0.post826 depends on Apycula==0.32
+#
+# So it is listed at the version nextpnr requires, and listed AT ALL only because
+# this project says out loud what it ships. Bumping nextpnr means bumping this
+# line to whatever the new nextpnr demands — not the other way round.
 yowasp-yosys==0.69.0.0.post1233
 yowasp-nextpnr-himbaechel-gowin==0.11.1.0.post826
-apycula==0.33
+apycula==0.32
