@@ -25,6 +25,31 @@ import tempfile
 TIMEOUT_SECONDS = int(os.environ.get("BW_SYNTH_TIMEOUT", "600"))
 
 
+# YoWASP names its console script after the package, and the package name is not
+# always the tool name: `yowasp-nextpnr-himbaechel-gowin` ships a command of the
+# same name, not the `yowasp-nextpnr-himbaechel` you would guess from the binary
+# it wraps. The first CI run failed exactly there — yosys and gowin_pack ran, and
+# nextpnr was "No such file or directory".
+#
+# So the binary is DISCOVERED rather than assumed, and a failure names every
+# candidate tried. A hard-coded guess fails opaquely on the next rename; this
+# fails with the list of things it looked for.
+NEXTPNR_CANDIDATES = (
+    "yowasp-nextpnr-himbaechel-gowin",
+    "yowasp-nextpnr-himbaechel",
+    "nextpnr-himbaechel",
+)
+
+
+def _resolve(candidates, what):
+    for name in candidates:
+        if shutil.which(name):
+            return name
+    raise FlowError(
+        "tool-missing",
+        f"{what} is not installed. Tried: {', '.join(candidates)}.")
+
+
 class FlowError(Exception):
     def __init__(self, code, reason, log=""):
         super().__init__(reason)
@@ -80,8 +105,9 @@ def synthesise(files, constraints, top, target):
             work, "yosys"))
 
         packed = os.path.join(work, "design_pnr.json")
+        nextpnr = _resolve(NEXTPNR_CANDIDATES, "nextpnr")
         log.append(_run(
-            ["yowasp-nextpnr-himbaechel", "--device", device,
+            [nextpnr, "--device", device,
              "--vopt", f"family={family}", "--vopt", f"cst=design.cst",
              "--json", "design.json", "--write", "design_pnr.json"],
             work, "nextpnr"))
@@ -111,9 +137,16 @@ def synthesise(files, constraints, top, target):
 def tool_versions():
     """Reported with every build: a bitstream is only reproducible against known tools."""
     out = {}
+    try:
+        nextpnr = _resolve(NEXTPNR_CANDIDATES, "nextpnr")
+    except FlowError as e:
+        nextpnr = None
+        out["nextpnr"] = f"unavailable: {e.reason}"
     for name, argv in (("yosys", ["yowasp-yosys", "-V"]),
-                       ("nextpnr", ["yowasp-nextpnr-himbaechel", "--version"]),
+                       ("nextpnr", [nextpnr, "--version"] if nextpnr else None),
                        ("apycula", ["gowin_pack", "--help"])):
+        if argv is None:
+            continue
         try:
             p = subprocess.run(argv, capture_output=True, text=True, timeout=30)
             out[name] = (p.stdout or p.stderr or "").strip().splitlines()[0][:120]
