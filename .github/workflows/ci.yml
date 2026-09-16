@@ -1,0 +1,29 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  licence-screen:
+    # The screen is the one part that must be right BEFORE the toolchain exists:
+    # it is what keeps this service from becoming a GPL distributor, and it needs
+    # no toolchain to test.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: The licence screen refuses what it must, and approves nothing
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v || python3 tests/run.py
+
+  toolchain:
+    # Proves the flow actually runs, on a real blinky, against the real tools.
+    # Separate job because it installs ~300 MB and the screen must not wait on it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install -r requirements.txt
+      - name: A blinky goes all the way to a bitstream
+        run: python3 tests/smoke_blinky.py

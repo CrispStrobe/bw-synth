@@ -1,0 +1,5 @@
+# The whole Gowin open flow, and every piece is permissively licensed —
+# which is the reason this service can exist at all. See README.md.
+yowasp-yosys==0.69.0.0.post1233
+yowasp-nextpnr-himbaechel-gowin==0.11.1.0.post826
+apycula==0.33
