@@ -1,0 +1,10 @@
+[Unit]
+Description=bw-synth container egress block (DOCKER-USER)
+After=docker.service
+PartOf=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/bwsynth-egress.sh
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target docker.service
