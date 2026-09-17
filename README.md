@@ -51,8 +51,8 @@ POST /api/synth
   "files": [{"name": "blink.v", "source": "..."}],
   "constraints": "IO_LOC \"led\" 73;\n..." }
 
-200 { "contract": 1, "ok": true, "netlist": {...}, "bitstream": "<base64>|null",
-      "log": "...", "toolVersions": {...} }
+200 { "contract": 1, "ok": true, "netlist": {...}, "simNetlist": {...}|null,
+      "bitstream": "<base64>|null", "log": "...", "toolVersions": {...} }
 200 { "contract": 1, "ok": false, "code": "...", "reason": "...", "log": "..." }
 
 GET /api/health   ->  200 when the toolchain is genuinely present, 503 otherwise
@@ -62,6 +62,15 @@ Every failure is a **200 with a named code**, except a malformed request (400)
 and an unexpected crash (500). *A design that does not compile is not an HTTP
 error* — it is an answer, and the client shows the user their own mistake rather
 than "try again later".
+
+**Two netlists, for two different jobs.** `netlist` is the `synth_gowin` output —
+Gowin-mapped (LUTs, OBUFs, DFFs, `$specify2` timing cells), which is what the
+bitstream is built from and what you'd inspect as the placed design. `simNetlist`
+is a *second, technology-independent* pass (generic `$and`/`$mux`/`$dff`/`$add`
+cells) for the browser's gate-level simulator: `yosys2digitaljs` refuses the
+mapped netlist (`Invalid cell type: $specify2`), so the on-screen board is driven
+from `simNetlist`, not `netlist`. It is `null` only when that generic pass
+degraded — the bitstream still returns.
 
 `/api/health` exists because the client's backend selector is fail-closed: a
 backend that does not answer is not offered at all. An unhealthy service must say

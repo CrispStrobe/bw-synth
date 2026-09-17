@@ -28,3 +28,5 @@ jobs:
       - run: pip install -r requirements.txt
       - name: A blinky goes all the way to a bitstream
         run: python3 tests/smoke_blinky.py
+      - name: The generic sim netlist keeps a clocked design's flip-flop
+        run: python3 tests/sim_netlist_smoke.py

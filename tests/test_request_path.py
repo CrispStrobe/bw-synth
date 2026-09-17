@@ -21,6 +21,7 @@ MIT = "// SPDX-License-Identifier: MIT\nmodule blink(output led); assign led=1'b
 GPL = "// SPDX-License-Identifier: GPL-3.0-only\nmodule c; endmodule"
 
 FAKE_RESULT = {"netlist": {"modules": {"blink": {"ports": {"led": {}}}}},
+               "sim_netlist": {"modules": {"blink": {"ports": {"led": {}}, "cells": {}}}},
                "bitstream_b64": "QUJD", "log": "ok", "toolVersions": {"yosys": "test"}}
 
 
@@ -44,6 +45,20 @@ def test_a_good_request_round_trips():
     assert body["ok"] is True
     assert body["contract"] == CONTRACT_VERSION
     assert body["netlist"]["modules"]["blink"]
+    assert body["bitstream"] == "QUJD"
+    # The generic sim netlist rides alongside the bitstream one; the client's
+    # board-drive tier feeds this, not `netlist` (which is Gowin-mapped).
+    assert body["simNetlist"]["modules"]["blink"]
+
+
+def test_a_null_sim_netlist_still_returns_ok():
+    # The generic pass DEGRADES: if it fails, simNetlist is null but the bitstream
+    # still comes back. A missing key would be a contract break; null is the
+    # honest "no simulatable netlist this time".
+    degraded = dict(FAKE_RESULT, sim_netlist=None)
+    status, body = _post(_req(), run=lambda *a, **k: degraded)
+    assert status == 200 and body["ok"] is True
+    assert body["simNetlist"] is None
     assert body["bitstream"] == "QUJD"
 
 
