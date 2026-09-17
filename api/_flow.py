@@ -219,6 +219,36 @@ def _run(argv, cwd, step):
     return log
 
 
+def sim_netlist(work, sources, top):
+    """A TECHNOLOGY-INDEPENDENT netlist for the gate-level simulator.
+
+    -> (netlist_dict, log_str); raises FlowError if yosys fails.
+
+    `synth_gowin` (the pass that feeds the bitstream) emits a GOWIN-MAPPED
+    netlist: LUTs, OBUFs, DFFs and the primitive library's `$specify2` timing
+    cells. That is exactly what nextpnr and gowin_pack need, and exactly what
+    `yosys2digitaljs` — the front end of brickwright-lite's gate-level tier —
+    CANNOT read: fed the mapped netlist it dies with `Invalid cell type:
+    $specify2`, so a synthesised design could never light the on-screen board.
+    (Found by feeding the first real synth_gowin netlist to the sim; see
+    brickwright-lite docs/TANG-NANO.md §7.6.)
+
+    The simulator wants GENERIC cells ($and/$mux/$dff/$add …), so this runs the
+    same coarse flow `yosys2digitaljs` runs itself — proc, opt, memory, NO
+    techmap, NO abc — from clean sources, because a gowin-mapped netlist cannot be
+    un-mapped back to generic cells. The `top` attribute Yosys writes is a binary
+    string (`"00…01"`), which the client's reader decodes.
+    """
+    read = " ".join(f"read_verilog {s};" for s in sources)
+    hier = (f"hierarchy -top {top}" if top
+            else "setattr -mod -unset top; hierarchy -auto-top")
+    script = (f"{read} {hier}; proc; opt; memory -nomap; wreduce -memx; "
+              "opt -full; write_json design_sim.json")
+    out = _run(_tool_argv("yosys") + ["-p", script], work, "yosys (sim netlist)")
+    with open(os.path.join(work, "design_sim.json"), encoding="utf-8") as fh:
+        return json.load(fh), out
+
+
 def synthesise(files, constraints, top, target):
     """-> {"netlist": {...}, "bitstream_b64": str|None, "log": str, "toolVersions": {...}}"""
     work = tempfile.mkdtemp(prefix="bw-synth-")
@@ -282,7 +312,22 @@ def synthesise(files, constraints, top, target):
         with open(json_netlist, encoding="utf-8") as fh:
             netlist = json.load(fh)
 
-        return {"netlist": netlist, "bitstream_b64": bitstream,
+        # A SECOND, technology-independent netlist — for the gate-level simulator,
+        # not the board. See sim_netlist() for why the mapped netlist above cannot
+        # be simulated. It DEGRADES rather than fails: the bitstream is the primary
+        # product, so a design that mapped for the board but tripped the generic
+        # pass still returns its bitstream, and the board-drive tier no-ops without
+        # a netlist.
+        sim = None
+        try:
+            sim, sim_log = sim_netlist(work, sources, top)
+            log.append(sim_log)
+        except (FlowError, OSError, ValueError) as e:
+            reason = getattr(e, "reason", str(e))
+            log.append(f"sim-netlist pass failed, returning simNetlist as null: {reason}")
+
+        return {"netlist": netlist, "sim_netlist": sim,
+                "bitstream_b64": bitstream,
                 "log": "\n".join(log), "toolVersions": tool_versions()}
     finally:
         shutil.rmtree(work, ignore_errors=True)

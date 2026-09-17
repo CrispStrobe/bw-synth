@@ -64,6 +64,24 @@ assert cells, "'blink' has no cells — it was named but not synthesised"
 
 print(f"\nok   netlist: {len(netlist['modules'])} modules; "
       f"blink ports={list(ports)} cells={len(cells)}")
+
+# The SEPARATE generic netlist for the gate-level simulator. The Gowin-mapped
+# `netlist` above is ~150 modules and carries $specify2 + OBUF/LUT primitives
+# that yosys2digitaljs cannot read; this one must be the design alone in generic
+# cells, or the on-screen board can never be driven from a synthesised design.
+sim = result["sim_netlist"]
+assert isinstance(sim, dict) and sim.get("modules"), "no sim netlist came back"
+assert "blink" in sim["modules"], f"sim netlist has no 'blink': {list(sim['modules'])}"
+assert len(sim["modules"]) < len(netlist["modules"]), \
+    "sim netlist carries the whole Gowin library — it is the mapped netlist, not a generic one"
+sim_types = {c.get("type")
+             for m in sim["modules"].values()
+             for c in (m.get("cells") or {}).values()}
+banned = {t for t in sim_types if t == "$specify2" or (t and not t.startswith("$"))}
+assert not banned, f"sim netlist has non-generic cells the simulator rejects: {sorted(banned)}"
+assert "led" in sim["modules"]["blink"].get("ports", {}), "sim netlist lost the led port"
+print(f"ok   sim netlist: {len(sim['modules'])} module(s), generic cells {sorted(sim_types) or '(none)'}")
+
 if result["bitstream_b64"]:
     print(f"ok   bitstream: {len(result['bitstream_b64'])} base64 chars")
 else:

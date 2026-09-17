@@ -12,8 +12,15 @@ can be checked against each other without either being "the" copy.
      "constraints": "IO_LOC \\"led\\" 73;\\n..."}
 
   RESPONSE 200
-    {"contract": 1, "ok": true, "netlist": {...}, "bitstream": "<base64>|null",
-     "log": "...", "toolVersions": {...}}
+    {"contract": 1, "ok": true, "netlist": {...}, "simNetlist": {...}|null,
+     "bitstream": "<base64>|null", "log": "...", "toolVersions": {...}}
+
+  `netlist` is the GOWIN-MAPPED synth_gowin output (what the bitstream is built
+  from). `simNetlist` is a separate TECHNOLOGY-INDEPENDENT netlist for the
+  gate-level simulator — the mapped one carries $specify2 and Gowin primitives
+  that yosys2digitaljs cannot read, so the board-drive tier feeds simNetlist, not
+  netlist. It is null only if the generic pass degraded (the bitstream still
+  returns).
 
 This module is TRANSPORT-FREE. app.py owns routing and sockets; everything here
 is a pure function, which is why swapping Vercel's per-file handler model for a
@@ -101,6 +108,7 @@ def handle_synth(raw_body, *, run=None):
     return 200, {
         "contract": CONTRACT_VERSION, "ok": True,
         "netlist": result["netlist"],
+        "simNetlist": result["sim_netlist"],
         "bitstream": result["bitstream_b64"],
         "log": result["log"],
         "toolVersions": result["toolVersions"],
