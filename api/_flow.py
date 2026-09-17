@@ -21,6 +21,7 @@ import os
 import sys
 import shutil
 import subprocess
+import time
 import tempfile
 
 # DELIBERATELY SHORTER THAN THE PLATFORM'S LIMIT.
@@ -287,14 +288,47 @@ def synthesise(files, constraints, top, target):
         shutil.rmtree(work, ignore_errors=True)
 
 
-def tool_versions():
+# tool_versions() runs all three WASM tools to PROVE execution, which costs
+# ~2.5s. /api/health calls it, and brickwright-lite's fail-closed backend probe
+# calls /api/health on every page load with a 3s timeout — so an honest 2.5s
+# health check races that timeout and the hosted backend flickers in and out of
+# "available". Found by the flag-on staging build (fpga.crispstro.be), which is
+# exactly what a staging build is for.
+#
+# The container is immutable: read-only rootfs, wasm baked at build, tools that
+# cannot change within its life. So a HEALTHY result is cached — once the tools
+# are proven to run, they keep running. An UNHEALTHY result is NOT cached, so a
+# service that is genuinely broken keeps saying so on every probe rather than
+# latching a stale 503. The first call still pays the full cost and still proves
+# execution; app.py warms it at import so even the first probe is fast.
+_VERSIONS_TTL_SECONDS = 600
+_versions_cache = {"at": 0.0, "value": None}
+
+
+def tool_versions(*, use_cache=True):
     """Reported with every build, and by /api/health.
 
     A bitstream is only reproducible against known tools, and the health probe is
     fail-closed: a backend that cannot do the work must say so rather than accept
     a request it will fail. Resolution proves each tool RUNS, so an entry here is
     either a real version string or a reason, never a hopeful guess.
+
+    A healthy result is memoized (see above); pass use_cache=False to force a
+    fresh probe.
     """
+    if use_cache and _versions_cache["value"] is not None \
+            and (time.time() - _versions_cache["at"]) < _VERSIONS_TTL_SECONDS:
+        return _versions_cache["value"]
+    out = _compute_tool_versions()
+    # Cache only when every tool resolved. `unavailable:` is the one shape a
+    # broken tool produces, so its absence means all three ran.
+    if not any(str(v).startswith("unavailable:") for v in out.values()):
+        _versions_cache["value"] = out
+        _versions_cache["at"] = time.time()
+    return out
+
+
+def _compute_tool_versions():
     out = {}
     for name, spec in TOOLS.items():
         try:

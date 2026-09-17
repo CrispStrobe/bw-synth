@@ -151,3 +151,15 @@ def app(environ, start_response):
     return _response(start_response, 404,
                      {"contract": CONTRACT_VERSION, "ok": False, "code": "no-such-route",
                       "reason": f"No route for {path}. Try /api/synth or /api/health."})
+
+
+# Warm the tool-version cache at import so the FIRST /api/health a worker serves
+# is already fast — brickwright-lite's fail-closed probe has a 3s timeout, and an
+# unwarmed 2.5s check races it (see api/_flow.py). Each gunicorn worker imports
+# this module once at boot and pays the ~2.5s there, off the request path. Guarded
+# so a probe failure at boot never stops the worker from starting: a later request
+# will simply compute it (and correctly report 503 if the tools are broken).
+try:
+    tool_versions()
+except Exception:  # noqa: BLE001
+    pass

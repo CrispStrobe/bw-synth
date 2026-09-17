@@ -6,9 +6,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import tests.test_licence as licence_tests                         # noqa: E402
 import tests.test_request_path as request_tests                    # noqa: E402
 import tests.test_transport as transport_tests                     # noqa: E402
+import tests.test_health_cache as health_cache_tests               # noqa: E402
 
 failed = 0
-for module in (licence_tests, request_tests, transport_tests):
+for module in (licence_tests, request_tests, transport_tests, health_cache_tests):
     print(f"{module.__name__}:")
     for name in sorted(n for n in dir(module) if n.startswith("test_")):
         try:
