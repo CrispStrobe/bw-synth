@@ -1,7 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "api/synth.py": { "memory": 2048, "maxDuration": 300 },
-    "api/health.py": { "memory": 1024, "maxDuration": 30 }
+    "app.py": {
+      "memory": 2048,
+      "maxDuration": 300
+    }
   }
 }
