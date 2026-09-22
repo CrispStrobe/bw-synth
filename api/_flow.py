@@ -116,6 +116,21 @@ def _subprocess_env():
     return env
 
 
+# A version probe is not a build. On the reference host all three tools answer in
+# ~2.5s total, so this bound only ever fires when a tool cannot run at all.
+#
+# Both probes below used 120s, i.e. up to six minutes across three tools, which
+# is fatal on a serverless host. app.py warms this cache at import; the YoWASP
+# packages then try to unpack ~100MB of WebAssembly into a /tmp with 0 bytes
+# free, and the subprocess BLOCKS rather than failing. app.py's import-time
+# guard catches exceptions, but a hang is not an exception -- module import
+# never completed, the platform killed the invocation, and so every route
+# returned INTERNAL_FUNCTION_INVOCATION_FAILED on a cold start, not merely
+# /api/health. Bounding both probes turns that hang into "unavailable: ...",
+# which is the shape _health() already reports as a fail-closed 503.
+_VERSION_PROBE_TIMEOUT = float(os.environ.get("BW_SYNTH_VERSION_TIMEOUT", "8"))
+
+
 def _tool_argv(name):
     """The argv prefix that actually RUNS this tool here.
 
@@ -141,7 +156,8 @@ def _tool_argv(name):
             continue
         try:
             probe = subprocess.run(argv + list(spec["version"]),
-                                   capture_output=True, text=True, timeout=120,
+                                   capture_output=True, text=True,
+                                   timeout=_VERSION_PROBE_TIMEOUT,
                                    env=_subprocess_env())
         except Exception as e:                  # noqa: BLE001
             tried.append(f"{label} ({type(e).__name__})")
@@ -383,7 +399,8 @@ def _compute_tool_versions():
             continue
         try:
             p = subprocess.run(argv + list(spec["version"]), capture_output=True,
-                               text=True, timeout=120, env=_subprocess_env())
+                               text=True, timeout=_VERSION_PROBE_TIMEOUT,
+                               env=_subprocess_env())
             text = (p.stdout or p.stderr or "").strip()
             out[name] = text.splitlines()[0][:120] if text else "(ran, no version output)"
         except Exception as e:                  # noqa: BLE001
