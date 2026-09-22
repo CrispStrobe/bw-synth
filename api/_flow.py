@@ -363,7 +363,29 @@ def synthesise(files, constraints, top, target):
 # latching a stale 503. The first call still pays the full cost and still proves
 # execution; app.py warms it at import so even the first probe is fast.
 _VERSIONS_TTL_SECONDS = 600
-_versions_cache = {"at": 0.0, "value": None}
+
+# A broken probe is cached too, but only briefly.
+#
+# Never caching it meant a host with one permanently-unavailable tool re-ran the
+# whole probe on EVERY request: measured 11s per /api/health on a serverless host
+# where yosys could not unpack its WebAssembly, against 0.1s from cache on a
+# healthy container. That is worse than the stale answer it was avoiding, because
+# brickwright-lite's selector gives up at 3s -- so the backend dropped out by
+# timeout rather than by reading the fail-closed 503 it is meant to act on, and
+# the two look identical from the client.
+#
+# The original reason for not caching a failure still holds, and is why this is a
+# short TTL rather than no TTL: a service whose tools come back must start saying
+# 200 again without waiting out the healthy 600s.
+_VERSIONS_TTL_UNHEALTHY_SECONDS = float(
+    os.environ.get("BW_SYNTH_VERSION_TTL_UNHEALTHY", "15"))
+
+_versions_cache = {"at": 0.0, "value": None, "healthy": False}
+
+
+def _all_resolved(versions):
+    """`unavailable:` is the one shape a tool that could not RUN produces."""
+    return not any(str(v).startswith("unavailable:") for v in versions.values())
 
 
 def tool_versions(*, use_cache=True):
@@ -377,15 +399,15 @@ def tool_versions(*, use_cache=True):
     A healthy result is memoized (see above); pass use_cache=False to force a
     fresh probe.
     """
-    if use_cache and _versions_cache["value"] is not None \
-            and (time.time() - _versions_cache["at"]) < _VERSIONS_TTL_SECONDS:
-        return _versions_cache["value"]
+    if use_cache and _versions_cache["value"] is not None:
+        ttl = (_VERSIONS_TTL_SECONDS if _versions_cache["healthy"]
+               else _VERSIONS_TTL_UNHEALTHY_SECONDS)
+        if (time.time() - _versions_cache["at"]) < ttl:
+            return _versions_cache["value"]
     out = _compute_tool_versions()
-    # Cache only when every tool resolved. `unavailable:` is the one shape a
-    # broken tool produces, so its absence means all three ran.
-    if not any(str(v).startswith("unavailable:") for v in out.values()):
-        _versions_cache["value"] = out
-        _versions_cache["at"] = time.time()
+    _versions_cache["value"] = out
+    _versions_cache["at"] = time.time()
+    _versions_cache["healthy"] = _all_resolved(out)
     return out
 
 
