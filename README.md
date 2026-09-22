@@ -83,10 +83,18 @@ need `--vopt family=<FAMILY>` on nextpnr and the matching `-d <DEVICE>` on
 `gowin_pack`. Omitting it fails in a way that reads like a broken design rather
 than a missing switch.
 
-## Deployment: it runs, and the toolchain does not fit
+## Deployment
 
-**Deployed at https://bw-synth.vercel.app — and synthesis cannot run there.**
-Measured from inside the live function, not inferred:
+**Production is https://synth.crispstro.be** — a container on a host with a real
+disk, as `DEPLOY.md` describes. `/api/health` answers `ok: true` with all three
+tools resolving, and a build replies a bitstream in seconds.
+
+### The Vercel attempt, and why it was abandoned
+
+A Vercel function was tried first. It deployed, routed correctly and enforced the
+licence rule, but **synthesis could never run there**. Kept here because the
+failure is specific and someone will otherwise try it again. Measured from inside
+the live function, not inferred:
 
     /tmp         525 MB total,   0 MB free
     dependencies             333 MB   (installed into /tmp by the runtime)
@@ -124,21 +132,22 @@ which is the whole reason that endpoint is fail-closed.
   reached. That is the rule this service exists to enforce, and it is enforced.
 - `gowin_pack` resolves and runs; only the two WebAssembly tools cannot unpack.
 
-### Where it should probably live instead
+### Where it lives instead
 
-A **container** — Fly, Railway, Render, or anything with a real disk — where
-330 MB is unremarkable. The flow is proven (see below); it needs a filesystem,
-not a rewrite. Vercel Sandbox is the other candidate, being designed for exactly
-this shape of work.
+A **container**, which is what `DEPLOY.md` sets up and what now serves
+https://synth.crispstro.be. 330 MB is unremarkable anywhere with a real disk; the
+flow needed a filesystem, not a rewrite.
 
-Keeping it on a Vercel function would mean fitting the toolchain into ~190 MB of
-free ephemeral space, which no amount of configuration here achieves.
+Keeping it on a Vercel function would have meant fitting the toolchain into
+~190 MB of free ephemeral space, which no amount of configuration achieves.
 
 ## Status
 
-**The flow works. The service has never served a request. It is not deployed.**
+**The flow works, the service is deployed, and it serves requests** — at
+https://synth.crispstro.be, on a container. Only the Vercel variant is dead.
 
-Those are three different claims and they are worth keeping apart.
+These were three separate claims while they were still separate; they are kept
+apart below because the evidence for each is different.
 
 | | evidence |
 |---|---|
@@ -146,14 +155,12 @@ Those are three different claims and they are worth keeping apart.
 | **The request path is correct** | `tests/test_request_path.py`, 11 cases — contract, licence refusal, body limits, which failures are HTTP errors rather than answers |
 | **The licence screen refuses what it must** | `tests/test_licence.py`, 7 cases |
 | **HTTP transport** | `tests/test_transport.py`, 6 cases — the handler driven with fake streams |
-| **Vercel's runtime invoking it** | *unverified* — only a deploy answers this |
-| **Deployment** | *not done* |
+| **A runtime invoking it** | `app.py`, a plain WSGI entrypoint dispatching on `PATH_INFO`; the per-file handlers it replaced are gone |
+| **Deployment** | live at https://synth.crispstro.be — `DEPLOY.md` |
 
-The first deploy plus one request from brickwright-lite's client is what closes
-the remaining gap, and it is now a narrow one: everything beneath the socket is
-covered, and what is left is whether Vercel's Python runtime invokes a
-`BaseHTTPRequestHandler` subclass the way the class expects. No test here can
-answer that.
+The gap this table used to describe is closed. The service answers
+`/api/health` with `ok: true` and all three tool versions, and refuses a GPL
+source at `/api/synth` without reaching synthesis.
 
 ### What getting here cost, in case it saves someone the same rounds
 
