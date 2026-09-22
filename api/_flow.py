@@ -116,19 +116,23 @@ def _subprocess_env():
     return env
 
 
-# A version probe is not a build. On the reference host all three tools answer in
-# ~2.5s total, so this bound only ever fires when a tool cannot run at all.
+# How long a tool may take to answer `--version` before it counts as unavailable.
 #
-# Both probes below used 120s, i.e. up to six minutes across three tools, which
-# is fatal on a serverless host. app.py warms this cache at import; the YoWASP
-# packages then try to unpack ~100MB of WebAssembly into a /tmp with 0 bytes
-# free, and the subprocess BLOCKS rather than failing. app.py's import-time
-# guard catches exceptions, but a hang is not an exception -- module import
-# never completed, the platform killed the invocation, and so every route
-# returned INTERNAL_FUNCTION_INVOCATION_FAILED on a cold start, not merely
-# /api/health. Bounding both probes turns that hang into "unavailable: ...",
-# which is the shape _health() already reports as a fail-closed 503.
-_VERSION_PROBE_TIMEOUT = float(os.environ.get("BW_SYNTH_VERSION_TIMEOUT", "8"))
+# Generous on purpose: the first invocation on a cold machine is not a version
+# check, it is YoWASP unpacking ~100MB of WebAssembly -- the "Preparing to run
+# yowasp-yosys. This might take a while..." step. On a CI runner with an empty
+# cache that legitimately runs to tens of seconds, and cutting it short reports
+# a working toolchain as missing. An 8s default did exactly that and turned
+# tests/smoke_blinky.py red with "tool-missing" on a yosys that was merely
+# still extracting.
+#
+# It is a named constant rather than a literal because the value is a property
+# of the host, not of the tools: somewhere that cannot finish the unpack at all
+# -- a serverless /tmp with no free space, where the call blocks instead of
+# failing -- wants this small, so the probe reports "unavailable:" and the
+# caller sees a fail-closed 503 rather than hanging. Set
+# BW_SYNTH_VERSION_TIMEOUT there. Anywhere with a real disk wants the default.
+_VERSION_PROBE_TIMEOUT = float(os.environ.get("BW_SYNTH_VERSION_TIMEOUT", "120"))
 
 
 def _tool_argv(name):
